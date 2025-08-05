@@ -1,7 +1,12 @@
+
 from flask import Flask, request, jsonify, redirect, session
 from flask_cors import CORS
 from flask_session import Session
-import sqlite3
+import jwt
+import psycopg2
+import psycopg2.extras
+from dateutil import parser
+from datetime import datetime, timedelta
 #flask configuration
 app = Flask(__name__)
 CORS(app, supports_credentials=True, origins=["http://localhost:4200"])
@@ -14,20 +19,32 @@ app.config["SESSION_COOKIE_SAMESITE"] = "None"
 app.config["SESSION_COOKIE_SECURE"] = True
 Session = Session(app)
 #end of flask configuration
+#token configuration
+SECRET_KEY = "1234" 
 #database connection
 def coni():
-    #conn = sqlite3.connect('clients_litiges.db')
-    conn = sqlite3.connect('dispute.db')
-    cursor = conn.cursor()
+    conn = psycopg2.connect(
+        dbname="dispute",
+        user="postgres",
+        password="123456",
+        host="localhost",
+        port="5432"
+    )
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     return conn, cursor
 def con():
-    conn = sqlite3.connect('dispute.db')
-    cursor = conn.cursor()
+    conn = psycopg2.connect(
+        dbname="dispute",
+        user="postgres",
+        password="123456",
+        host="localhost",
+        port="5432"
+    )
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     return cursor
 #to transfer sql into json
 def disc(cursor, rows):
-    columns= [column[0] for column in cursor.description]
-    return [dict(zip(columns, row)) for row in rows]
+    return [dict(row) for row in rows]
 
 
 @app.route('/litige/all')
@@ -57,13 +74,13 @@ def show_litige():
 def show_litige_by_name(name):
     cursor=con()
     
-    cursor.execute('SELECT * FROM clients WHERE name = ?', (name,))
+    cursor.execute('SELECT * FROM clients WHERE name = %s', (name,))
     client = cursor.fetchmany(1)
     clients = disc(cursor, client)
-    cursor.execute('SELECT id FROM clients WHERE name = ?', (name,))
+    cursor.execute('SELECT id FROM clients WHERE name = %s', (name,))
     id = cursor.fetchone()
     print(id)
-    cursor.execute('SELECT * FROM litiges WHERE clientId = ?', id)
+    cursor.execute('SELECT * FROM litiges WHERE clientId = %s', id)
     litige = cursor.fetchall()
     litiges = disc(cursor, litige)
     return jsonify({"client": clients, "litiges": litiges }), 200
@@ -71,15 +88,15 @@ def show_litige_by_name(name):
 def show_number_dispute(id):#want u to try later with not a functio n with this line curssor.execute('SELECT description, count(*) FROM litiges group by description')
     #do a function to seperate the disputes it will be lesser lines and easier to read
     curssor = con()
-    curssor.execute('SELECT description, count(*) FROM litiges where clientId = ?  group by description', (id,))
+    curssor.execute('SELECT description, count(*) FROM litiges where clientId = %s  group by description', (id,))
     types = curssor.fetchall()
     return jsonify({"dispute": types}), 200
 @app.route('/line')
 def show_number_dispute_day():
     #later find a wat to send all the days cause the form is a bit weird when u sent it    
     curssor = con()
-    curssor.execute('SELECT opened_at, count(*) FROM litiges group by description, opened_at order by opened_at ')
-    types = curssor.fetchall() 
+    curssor.execute('SELECT TO_CHAR(opened_at, \'YYYY-MM-DD\'), count(*) FROM litiges group by opened_at order by opened_at ')
+    types = curssor.fetchall()
     return jsonify({"dispute": types}), 200
 @app.route('/test')
 def test():
@@ -87,90 +104,69 @@ def test():
     curssor.execute('SELECT description, count(*) FROM litiges group by description')
     types = curssor.fetchall()
     return jsonify({"dispute": types}), 200
-@app.route('/insert')
-def insert_sample_litiges():
-    return jsonify({"message": "just to close the data so the fct dont work"}), 200
-    cursor = con()
-    data = [
-        (
-            "Jean Dupont", 2, 1, "2025-05-28", "Produit reçu endommagé.", 10, 350.0,
-            "damaged_goods", "987654321", "photo_domage.jpg", "moyenne", "",
-            "en cours", "qualité"
-        ),
-        (
-            "Marie Curie", 3, 0, "2025-06-01", "Produit reçu endommagé.", 11, 120.0,
-            "damaged_goods", "123456789", "photo_domage2.jpg", "haute", "",
-            "ouvert", "qualité"
-        ),
-        (
-            "Paul Martin", 4, 1, "2025-06-05", "Produit reçu endommagé.", 12, 200.0,
-            "damaged_goods", "555555555", "photo_domage3.jpg", "basse", "",
-            "résolu", "qualité"
-        )
-    ]
-    cursor.executemany("""
-        INSERT INTO litiges (
-            agentTraitant, clientId, confirmer, dateDepot, description, id, montant,
-            motif, numeroCommande, pieceJointe, priorite, resolution, statut, typeLitige
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, data)
-    cursor.connection.commit()
-    return jsonify({"message": "Sample litiges inserted"}), 201
+
 @app.route('/litige/<int:id>/<string:name>')#make it send it to the client fot it  to make the autosearch the id is of the client
 def show_litige_by_name_id(id,name):
     cursor = con()
-    cursor.execute('SELECT * FROM clients WHERE id = ?', (id,))
+    cursor.execute('SELECT * FROM clients WHERE id = %s', (id,))
     client = cursor.fetchall()
     clients = disc(cursor, client)
-    cursor.execute('SELECT * FROM litiges WHERE description = ?', (name,))
+    cursor.execute('SELECT * FROM litiges WHERE description = %s', (name,))
     litige = cursor.fetchall()
     litiges = disc(cursor, litige)
     return jsonify({"client": clients, "litiges": litiges}), 200
 @app.route('/litige/<int:id>')#make it send it to the client fot it  to make the autosearch the id is of the client
 def show_litige_by_id(id):
     cursor = con()
-    cursor.execute('SELECT * FROM litiges WHERE clientId = ?', (id,))
+    cursor.execute('SELECT * FROM litiges WHERE clientId = %s', (id,))
     litigey = cursor.fetchall()
     litiges = disc(cursor, litigey)
-    cursor.execute('SELECT * FROM litiges WHERE clientId = ?', (id,))
+    cursor.execute('SELECT * FROM litiges WHERE clientId = %s', (id,))
     litigez = cursor.fetchmany(1)
     litige = disc(cursor, litigez)
-    cursor.execute('SELECT * FROM clients WHERE id = ?', (id,))
+    cursor.execute('SELECT * FROM clients WHERE id = %s', (id,))
     client = cursor.fetchall()
     clients = disc(cursor, client)
     return jsonify({"clients": litiges, "client":clients,"litiges": litige}), 200
 @app.route('/litige/<int:id>/all')
 def show_client_litige(id):
     cursor=con()
-    cursor.execute('SELECT * FROM litiges where clientId = ?', (id,))
+    cursor.execute('SELECT * FROM litiges where clientId = %s', (id,))
     litige = cursor.fetchall()
     litiges = disc(cursor, litige)
-    cursor.execute('SELECT * FROM clients where id = ?', (id,))
+    cursor.execute('SELECT * FROM clients where id = %s', (id,))
     client = cursor.fetchall()
     clients = disc(cursor, client)
     return jsonify({"litiges" : litiges,"client": clients }), 200
 @app.route('/line/<int:id>')
 def show_client_dispute_day(id):
-       
-    curssor = con()
-    curssor.execute('SELECT opened_at, count(*) FROM litiges where clientId = ? group by description, opened_at order by opened_at', (id,))
-    types = curssor.fetchall() 
+
+    cursor = con()
+    cursor.execute('SELECT TO_CHAR(opened_at, \'YYYY-MM-DD\'), count(*) FROM litiges where clientId = %s group by description, opened_at order by opened_at', (id,))
+    types = cursor.fetchall()
     print(types)
     return jsonify({"dispute": types}), 200
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    username = data.get('email')
+    mail = data.get('email')
+    password = data.get('password')
     curssor = con()
-    curssor.execute('SELECT id FROM clients WHERE name = ?', (username,))
+    #it s username cause I wrote it wrongly in the db
+    curssor.execute('SELECT * FROM users WHERE username = %s AND password = %s', (mail, password))
     id = curssor.fetchmany()
     #clients = disc(curssor, id)
     print(id)
-    if  username=="admin":
-        return jsonify({"message": "welcome"}), 200
-    #if not (id or username=="admin" ):
-    #    return jsonify({"erroe": "Invalid username"}), 401
-    return jsonify({"id": id}), 200
+    if not id:
+        return jsonify({"error": "Invalid username or password"}), 401
+    
+    payload = {
+        'mail': mail,
+        'exp': datetime.now() + timedelta(hours=1)
+    }
+    token= jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+    return jsonify({"token": token}), 200
+        
 @app.route('/register/litige', methods=['POST'])
 def register_litige():
     data = request.json
@@ -179,16 +175,16 @@ def register_litige():
     clientId = data.get('clientId')
     status = data.get('status')
     description = data.get('description')
-    due_date = data.get('due_date')
+    
     opened_at = data.get('opened_at')
     
 
     cursor.execute("""
         INSERT INTO litiges (
-            invoice_id, clientId, status, description, due_date, opened_at, 
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            invoice_id, clientId, status, description, opened_at
+        ) VALUES (%s, %s, %s, %s, %s)
     """, (
-        invoice_id, clientId, status, description, due_date, opened_at, 
+        invoice_id, clientId, status, description, opened_at, 
     ))
     conn.commit()
     conn.close()
@@ -238,8 +234,8 @@ def column():
     cursor.execute("""
         select name,count(*) as count
         from clients
-        join invoices on clients.id = invoices.client_id
-        where invoices.invoices_status = 'disputed'
+        join litiges on clients.id = litiges.clientId
+        
         group by name
         order by count DESC
     """)
@@ -265,7 +261,7 @@ def column_overdue():
 @app.route('/api/invoices/<int:id>', methods=['PUT'])
 def update_invoice(id):
     conn, cursor = coni()
-    cursor.execute('SELECT invoices_status FROM invoices WHERE invoice_id = ?', (id,))
+    cursor.execute('SELECT invoices_status FROM invoices WHERE invoice_id = %s', (id,))
     invoice = cursor.fetchone()
     if not invoice:
         conn.close()
@@ -277,21 +273,21 @@ def update_invoice(id):
     montant = data.get('montant')
     cursor.execute("""
         UPDATE invoices
-        SET invoices_status = ?, updated_at = ?, montant = ?
-        WHERE invoice_id = ?
+        SET invoices_status = %s, updated_at = %s, montant = %s
+        WHERE invoice_id = %s
     """, (status, updated_at, montant, id))
     conn.commit()
     if invoice[0]=="disputed"and status!="disputed":
         cursor.execute("""
             UPDATE litiges
-            SET status = 'resolved', resolution_date = ?
-            WHERE invoice_id = ?
+            SET status = 'resolved', resolution_date = %s
+            WHERE invoice_id = %s
         """, (updated_at, id))
         conn.commit()
         conn.close()
         return jsonify({"message": "Invoice updated and dispute resolved successfully"}), 200
     if status=="disputed":
-        cursor.execute("select * from litiges where invoice_id = ?", (id,))
+        cursor.execute("select * from litiges where invoice_id = %s", (id,))
         litige=cursor.fetchmany(1)
         litiges=disc(cursor, litige)
         conn.close()
@@ -301,11 +297,12 @@ def update_invoice(id):
 @app.route('/autocomplete/<string:name>')
 def autocomplete(name):
     conn, cursor = coni()
+    name=f"%{name}%"
     cursor.execute("""
         select *
         from clients
         join invoices on clients.id = invoices.client_id
-        where clients.name = ?
+        where clients.name ILIKE %s
     """, (name,))
     results = cursor.fetchall()
     data = disc(cursor, results)
@@ -328,8 +325,9 @@ def join_client():
     results = cursor.fetchall()
     data = disc(cursor, results)
     cursor.execute("""
-        select *
+        select distinct name
         from clients
+        join litiges on clients.id = litiges.clientId
     """)
     results = cursor.fetchall()
     client = disc(cursor, results)
@@ -342,8 +340,150 @@ def join_clients(id):
         SELECT *
         FROM clients
         JOIN litiges ON clients.id = litiges.clientId
-        WHERE clients.id = ?
+        WHERE clients.id = %s
     """, (id,))
+    results = cursor.fetchall()
+    data = disc(cursor, results)
+    cursor.execute("""
+        SELECT *
+        FROM clients            
+    """)
+    results = cursor.fetchall()
+    client = disc(cursor, results)
+    conn.close()
+    return jsonify({"data": data, "clients": client}), 200
+@app.route('/filterbytime')
+def filter_by_time():
+    conn, cursor =coni()
+    max=request.args.get('max')
+    min=request.args.get('min')
+ 
+    cursor.execute("""
+        SELECT *
+        FROM clients
+        Join invoices ON clients.id = invoices.client_id
+        WHERE invoices.created_at BETWEEN %s AND %s
+        """, (min, max))
+    results = cursor.fetchall()
+    data = disc(cursor, results)
+   
+    results = cursor.fetchall()
+    clients = disc(cursor, results)
+    conn.close()
+    return jsonify({"data": data}), 200
+@app.route('/autocomplete/clients/<string:name>')
+def autocomplete_client(name):
+    conn, cursor = coni()
+    cursor.execute("""
+        select *
+        from clients
+        Left join litiges on clients.id = litiges.clientId
+        where clients.name = %s
+    """, (name,))
+    results = cursor.fetchall()
+    data = disc(cursor, results)
+    cursor.execute("""
+        select distinct name
+        from clients
+        join litiges on clients.id = litiges.clientId
+    """)
+
+    results = cursor.fetchall()
+    client = disc(cursor, results)
+    
+    conn.close()
+    return jsonify({"data": data, "clients": client}), 200
+@app.route('/update/all', methods=['patch'])
+def update_all():
+    conn, cursor = coni()
+    data = request.json
+    invoice_id = data.get('id')
+    date = data.get('date')
+    money = data.get('money')
+    
+    print(invoice_id, date, money)
+    cursor.execute("""
+        UPDATE invoices
+        SET updated_at = %s , invoices_status = 'paid', amount_paid = %s
+        WHERE invoice_id = %s
+    """, (date, money, invoice_id))
+
+    cursor.execute("""
+        UPDATE litiges
+        SET status = 'resolved', resolution_date = %s
+        WHERE invoice_id = %s
+    """, (date, invoice_id))
+    conn.commit()
+    
+    conn.close()
+    return jsonify({"yup": "updated"}), 200
+@app.route('/notifications')
+def notifications():
+    conn,cursor= coni()
+    cursor.execute("""
+        select *
+        from notifications
+        where read = True
+                   
+    """
+     )
+    result= cursor.fetchall()
+    notifications=disc(cursor,result)
+    conn.close
+    return jsonify({"notifications":notifications })
+@app.route('/notifications/delete', methods=['PATCH'])
+def delete():
+    conn,cursor=coni()
+    data=request.json
+    message=data['message']
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    cursor.execute("""
+        update notifications
+        set read = %s
+        where message=%s
+    """,(False, message))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Notification marked as read"}), 200
+@app.route('/notifications/insert', methods=['POST'])
+def not_insert():
+    conn, cursor = coni()
+    data = request.json
+    id = data.get('id')
+    message="paid invoice"
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    cursor.execute("""
+        INSERT INTO notifications (message, read)
+        VALUES (%s, %s)
+    """, (message, True))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": "Notification inserted successfully"}), 201
+@app.route('/notifications/<int:id>', methods=['GET'])
+def notifications_inv(id):
+    conn, cursor = coni()
+    cursor.execute("""
+        SELECT *
+        FROM clients
+        JOIN invoices ON clients.id = invoices.client_id
+        where invoices.invoice_id = %s
+    """, (id,))
+    results = cursor.fetchall()
+    data=disc(cursor, results)
+    conn.close()
+    return jsonify({"data": data}), 200 
+@app.route('/mail/<string:mail>')
+def delete_notification(mail):
+    conn, cursor = coni()
+    mail=f"%{mail}%"
+    cursor.execute("""
+        select *
+        from clients
+        join invoices on clients.id = invoices.client_id
+        where clients.email ILIKE %s
+    """, (mail,))
     results = cursor.fetchall()
     data = disc(cursor, results)
     cursor.execute("""
@@ -353,10 +493,10 @@ def join_clients(id):
     results = cursor.fetchall()
     client = disc(cursor, results)
     conn.close()
+    
     return jsonify({"data": data, "clients": client}), 200
-
-
-
+   
+    
 if __name__ == '__main__':
     app.run(debug=True)
 
